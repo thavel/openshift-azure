@@ -1,8 +1,12 @@
 #!/usr/bin/env bash
 
-export WORKSPACE=$(pwd)
+export REPOSITORY="https://raw.githubusercontent.com/thavel/openshift-azure/master/"
+export WORKSPACE=$(pwd)/tmp
 export OPENSHIFTPASS="Pass@word1"
 source config.env
+
+# Account subscription
+export SUBID=$(az account show --query id --output tsv)
 
 # Create Azure resource group
 az group create -n ${RESOURCEGROUP} -l ${LOCATION}
@@ -27,7 +31,7 @@ cat > ${WORKSPACE}/parameters.json <<EOF
 	"contentVersion": "1.0.0.0",
 	"parameters": {
 		"_artifactsLocation": {
-			"value": "https://raw.githubusercontent.com/Azure/azure-quickstart-templates/master/openshift-origin-rhel/"
+			"value": "${REPOSITORY}"
 		},
 		"masterVmSize": {
 			"value": "Standard_DS3_v2"
@@ -39,51 +43,51 @@ cat > ${WORKSPACE}/parameters.json <<EOF
 			"value": "centos"
 		},
 		"openshiftMasterHostname": {
-			"value": "changeme"
+			"value": "${CLUSTERPREFIX}m"
 		},
 		"openshiftMasterPublicIpDnsLabelPrefix": {
-			"value": "GEN-UNIQUE"
+			"value": "${RESOURCEGROUP}master"
 		},
 		"nodeLbPublicIpDnsLabelPrefix": {
-			"value": "GEN-UNIQUE"
+			"value": "${RESOURCEGROUP}node"
 		},
 		"nodePrefix": {
-			"value": "changeme"
+			"value": "${CLUSTERPREFIX}"
 		},
 		"nodeInstanceCount": {
 			"value": 1
 		},
 		"adminUsername": {
-			"value": "changeme"
+			"value": "${ADMINLOGIN}"
 		},
 		"adminPassword": {
-			"value": "changeme"
+			"value": "${ADMINPASS}"
 		},
 		"sshPublicKey": {
-			"value": "GEN-SSH-PUB-KEY"
+			"value": "${PUBKEY}"
 		},
 		"subscriptionId": {
-			"value": "changeme"
+			"value": "${SUBID}"
 		},
 		"keyVaultResourceGroup": {
-			"value": "changeme"
+			"value": "${RESOURCEGROUP}"
 		},
 		"keyVaultName": {
-			"value": "changeme"
+			"value": "${RESOURCEGROUP}Vault"
 		},
 		"keyVaultSecret": {
-			"value": "changeme"
+			"value": "${RESOURCEGROUP}Key"
 		},
 		"defaultSubDomainType": {
 			"value": "xipio"
 		},
 		"defaultSubDomain": {
-			"value": "changeme"
+			"value": "ignored"
 		}
 	}
 }
 EOF
 
 # Start deployment
-curl -o ${WORKSPACE}/template.json https://raw.githubusercontent.com/Microsoft/openshift-origin/master/azuredeploy.json
-az group deployment create --resource-group ${RESOURCEGROUP} --template-file ${WORKSPACE}/template.json --parameters @${WORKSPACE}/parameters.json
+#curl -o ${WORKSPACE}/template.json ${REPOSITORY}/template.json
+#az group deployment create --resource-group ${RESOURCEGROUP} --template-file ${WORKSPACE}/template.json --parameters @${WORKSPACE}/parameters.json
