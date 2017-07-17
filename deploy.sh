@@ -1,12 +1,17 @@
-#!/usr/bin/env bash
-
-export REPOSITORY="https://raw.githubusercontent.com/thavel/openshift-azure/master/"
-export WORKSPACE=$(pwd)/tmp
+export WORKSPACE=$(pwd)/data
+export LOCATION="westeurope"
+export OPENSHIFTLOGIN="osadmin"
 export OPENSHIFTPASS="Pass@word1"
+export REPOSITORY="Microsoft/openshift-origin/master"
 source config.env
 
-# Account subscription
-export SUBID=$(az account show --query id --output tsv)
+# Prepare deployment env
+if [ -d "${WORKSPACE}" ]
+then
+	echo "This script is not idempotent, please manually (re)move the local 'data' folder first!"
+fi
+mkdir data
+pushd data
 
 # Create Azure resource group
 az group create -n ${RESOURCEGROUP} -l ${LOCATION}
@@ -17,12 +22,12 @@ ssh-keygen -f ${WORKSPACE}/openshift_rsa -t rsa -N ''
 export PUBKEY=$(cat ${WORKSPACE}/openshift_rsa.pub)
 
 # Store private key in a Azure vault
-az keyvault create -n ${RESOURCEGROUP}Vault -g ${RESOURCEGROUP} -l ${LOCATION} --enabled-for-template-deployment true
-az keyvault secret set --vault-name ${RESOURCEGROUP}Vault -n ${RESOURCEGROUP}Key --file ${WORKSPACE}/openshift_rsa
+az keyvault create -n ${RESOURCEGROUP}-vault -g ${RESOURCEGROUP} -l ${LOCATION} --enabled-for-template-deployment true
+az keyvault secret set --vault-name ${RESOURCEGROUP}-vault -n ${RESOURCEGROUP}-key --file ${WORKSPACE}/openshift_rsa
 
 # Create Azure Service Principal
-az ad sp create-for-rbac -n ${RESOURCEGROUP}Sp --password ${VAULTSECRET} --role contributor --scopes ${SCOPE}
-export APPID=$(az ad sp list --display-name ${RESOURCEGROUP}Sp | jq ".[0].appId" --raw-output)
+az ad sp create-for-rbac -n ${RESOURCEGROUP}-sp --password ${VAULTSECRET} --role contributor --scopes ${SCOPE}
+export APPID=$(az ad sp list --display-name ${RESOURCEGROUP}-sp | jq '.[0].appId' --raw-output)
 
 # Write template parameters
 cat > ${WORKSPACE}/parameters.json <<EOF
@@ -31,63 +36,85 @@ cat > ${WORKSPACE}/parameters.json <<EOF
 	"contentVersion": "1.0.0.0",
 	"parameters": {
 		"_artifactsLocation": {
-			"value": "${REPOSITORY}"
-		},
-		"masterVmSize": {
-			"value": "Standard_DS3_v2"
-		},
-		"nodeVmSize": {
-			"value": "Standard_DS3_v2"
+			"value": "https://raw.githubusercontent.com/${REPOSITORY}/"
 		},
 		"osImage": {
 			"value": "centos"
 		},
-		"openshiftMasterHostname": {
-			"value": "${CLUSTERPREFIX}m"
+		"masterVmSize": {
+			"value": "Standard_DS2_v2"
 		},
-		"openshiftMasterPublicIpDnsLabelPrefix": {
-			"value": "${RESOURCEGROUP}master"
+		"infraVmSize": {
+			"value": "Standard_DS2_v2"
 		},
-		"nodeLbPublicIpDnsLabelPrefix": {
-			"value": "${RESOURCEGROUP}node"
+		"nodeVmSize": {
+			"value": "Standard_DS2_v2"
 		},
-		"nodePrefix": {
+		"openshiftClusterPrefix": {
 			"value": "${CLUSTERPREFIX}"
+		},
+		"openshiftMasterPublicIpDnsLabel": {
+			"value": "${RESOURCEGROUP}-master"
+		},
+		"infraLbPublicIpDnsLabel": {
+			"value": "${RESOURCEGROUP}-node"
+		},
+		"masterInstanceCount": {
+			"value": 1
+		},
+		"infraInstanceCount": {
+			"value": 1
 		},
 		"nodeInstanceCount": {
 			"value": 1
 		},
-		"adminUsername": {
-			"value": "${ADMINLOGIN}"
+		"dataDiskSize": {
+			"value": 128
 		},
-		"adminPassword": {
-			"value": "${ADMINPASS}"
+		"adminUsername": {
+			"value": "zenikadmin"
+		},
+		"openshiftPassword": {
+			"value": "${OPENSHIFTPASS}"
 		},
 		"sshPublicKey": {
 			"value": "${PUBKEY}"
-		},
-		"subscriptionId": {
-			"value": "${SUBID}"
 		},
 		"keyVaultResourceGroup": {
 			"value": "${RESOURCEGROUP}"
 		},
 		"keyVaultName": {
-			"value": "${RESOURCEGROUP}Vault"
+			"value": "${RESOURCEGROUP}-vault"
 		},
 		"keyVaultSecret": {
-			"value": "${RESOURCEGROUP}Key"
+			"value": "${RESOURCEGROUP}-key"
+		},
+		"aadClientId": {
+			"value": "${APPID}"
+		},
+		"aadClientSecret": {
+			"value": "${VAULTSECRET}"
 		},
 		"defaultSubDomainType": {
 			"value": "xipio"
 		},
 		"defaultSubDomain": {
-			"value": "ignored"
+			"value": "none"
 		}
 	}
 }
 EOF
 
 # Start deployment
-#curl -o ${WORKSPACE}/template.json ${REPOSITORY}/template.json
-#az group deployment create --resource-group ${RESOURCEGROUP} --template-file ${WORKSPACE}/template.json --parameters @${WORKSPACE}/parameters.json
+curl -o ${WORKSPACE}/template.json https://raw.githubusercontent.com/${REPOSITORY}/azuredeploy.json
+az group deployment create --resource-group ${RESOURCEGROUP} --template-file ${WORKSPACE}/template.json --parameters @${WORKSPACE}/parameters.json | tee output.json
+
+# Read and print cluster info
+export WEBACCESS=$(cat output.json | jq '.properties.outputs."openshift Console Url".value' --raw-output)
+export SSHACCESS=$(cat output.json | jq '.properties.outputs."openshift Master SSH".value' --raw-output)
+cat <<EOF
+    * Web console: ${WEBACCESS}
+    * SSH: ${SSHACCESS}
+EOF
+
+popd
